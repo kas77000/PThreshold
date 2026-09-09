@@ -23,6 +23,15 @@ from perfthreshold import (calibrate, config, fit, groups, load, persist,
                            plots, schema, score, split)
 
 
+_TARGET_WARNING = (
+    "*** DIAGNOSTIC MODE -- NOT A PRODUCTION BASIS ***\n"
+    "k was chosen by the alert count it produces. A threshold selected that "
+    "way reads, to a reviewer, as a threshold tuned to suppress alerts. Use "
+    "this to understand what a parameter costs; set the production k from "
+    "policy (the default, config.DEFAULT_K) and let the count be an outcome."
+)
+
+
 def safe(name) -> str:
     """A filesystem-safe token. Cell keys contain '|' and group names spaces."""
     cleaned = "".join(c if (c.isalnum() or c in "-_") else "_"
@@ -107,30 +116,46 @@ def cmd_fit(args) -> int:
         return 2
 
     ks = _parse_grid(args.k_grid)
-    target = (config.DEFAULT_TARGET
-              if (args.k is None and args.target is None) else args.target)
+
+    # --target is the ONLY way k gets chosen by the alert count, and it is a
+    # diagnostic. With neither flag, k comes from policy (config.DEFAULT_K):
+    # a threshold whose value was selected by how few alerts it produced is,
+    # to a reviewer, a threshold tuned to suppress alerts. The default must
+    # never be able to look like that.
+    solving_for_target = args.target is not None
+    # The curve is drawn against a reference count either way -- it is the
+    # sensitivity analysis, and it is evidence of a considered choice whether
+    # or not it was used to make one.
+    reference_target = (args.target if solving_for_target
+                        else config.DEFAULT_TARGET)
 
     print(f"\nCalibrating over {len(ks)} values of k, "
           f"{len(calibrate.months(resolved))} months, leave-one-month-out ...")
     curve = calibrate.curve(resolved, ks=ks, percentile=args.percentile,
                             min_cell_n=args.min_cell_n,
-                            target=target if target is not None else 5)
+                            target=reference_target)
     print(curve.to_string(index=False))
 
-    if args.k is not None:
-        k, k_mode = float(args.k), "fixed"
+    if not solving_for_target:
+        k, k_mode = (float(args.k) if args.k is not None
+                     else float(config.DEFAULT_K)), "fixed"
+        source = ("supplied on the command line" if args.k is not None
+                  else "the configured default (config.DEFAULT_K)")
         near = curve.iloc[int((curve["k"] - k).abs().argsort().iloc[0])]
-        reason = (f"k={k:.2f} was supplied. Nearest calibrated point "
-                  f"(k={near['k']:.2f}) gives a median of "
+        reason = (f"k={k:.2f} was fixed in advance -- {source} -- not selected "
+                  f"from the alert count. For reference only, the nearest "
+                  f"calibrated point (k={near['k']:.2f}) implies a median of "
                   f"{near['median_flags']:.1f} flags/month "
-                  f"(range {int(near['min_flags'])}-{int(near['max_flags'])}).")
+                  f"(range {int(near['min_flags'])}-{int(near['max_flags'])} "
+                  f"over {int(near['n_months'])} out-of-sample months).")
     else:
-        choice = calibrate.choose_k(curve, target=target)
+        choice = calibrate.choose_k(curve, target=args.target)
         print("\n" + choice.reason)
+        print(_TARGET_WARNING)
         if not choice.reachable:
             # Not an error: the book may genuinely hold more outliers than the
             # budget allows. Fall back to the configured k and say so.
-            k, k_mode = config.DEFAULT_K, "target"
+            k, k_mode = float(config.DEFAULT_K), "target"
             reason = choice.reason + f" Fell back to the configured k={k:.2f}."
         else:
             k, k_mode, reason = choice.k, "target", choice.reason
@@ -147,7 +172,7 @@ def cmd_fit(args) -> int:
         scope=args.scope, market_groups=config.MARKET_GROUPS,
         k=float(k), percentile=float(args.percentile),
         min_cell_n=int(args.min_cell_n), k_mode=k_mode, k_reason=reason,
-        target=target,
+        target=(args.target if solving_for_target else None),
         fit_start=(str(clean.date_min.date()) if clean.date_min is not None
                    else None),
         fit_end=(str(clean.date_max.date()) if clean.date_max is not None
@@ -164,8 +189,7 @@ def cmd_fit(args) -> int:
 
     if not args.no_plots:
         plots.calibration(curve, os.path.join(args.out, "calibration.png"),
-                          target=target if target is not None else 5,
-                          chosen_k=k)
+                          target=reference_target, chosen_k=k)
         for _, row in result.bands.iterrows():
             cell = row["cell_key"]
             values = resolved.loc[resolved[schema.CELL_KEY] == cell,
@@ -175,14 +199,23 @@ def cmd_fit(args) -> int:
                 os.path.join(args.out, f"distribution_{safe(cell)}.png"),
                 title=str(cell).replace("|", " | "))
 
-    _write_fit_summary(args.out, band_file, curve, splits, clean, target)
+    _write_fit_summary(args.out, band_file, curve, splits, clean,
+                       reference_target)
     print(f"\nWrote {paths['json']}")
     return 0
 
 
 def _write_fit_summary(out_dir, band_file, curve, splits, clean, target):
+    # A band whose k came from the alert count says so at the top of its own
+    # summary, so the caveat travels with the artifact rather than living in
+    # someone's memory of how the run was invoked.
+    if band_file.k_mode == "target":
+        quoted = _TARGET_WARNING.replace("\n", "  \n> ")
+        banner = ["", "> **" + quoted + "**", ""]
+    else:
+        banner = [""]
     lines = [
-        "# Fit summary", "",
+        "# Fit summary", *banner,
         f"- metric: `{band_file.metric}` ({band_file.metric_units})",
         f"- scope: `{band_file.scope}`",
         f"- fit window: {band_file.fit_start} .. {band_file.fit_end}",
@@ -190,7 +223,10 @@ def _write_fit_summary(out_dir, band_file, curve, splits, clean, target):
         f"- rule: `hi = MAX(mean + {band_file.k:g}*sd, "
         f"P{band_file.percentile:g})`, mirrored on the low side",
         f"- k mode: {band_file.k_mode}"
-        + (f" (target {target}/month)" if target is not None else ""), "",
+        + (f" (solved against a target of {band_file.target}/month)"
+           if band_file.k_mode == "target"
+           else " -- set in advance, not from the alert count"), "",
+        f"- reference line on the calibration chart: {target} flags/month", "",
         "## Why this k", "", band_file.k_reason, "",
         "## Bands", "", band_file.bands.to_markdown(index=False), "",
         "## Calibration (leave-one-month-out)", "",

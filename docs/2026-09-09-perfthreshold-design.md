@@ -223,8 +223,21 @@ average alone hides the difference.
 
 | Mode | Behaviour |
 |---|---|
-| `--target 5` *(default)* | search k for the smallest value whose **median out-of-sample monthly count across all cells combined** is ≤ target; report the k found and what it costs |
-| `--k 4` | fix k; the curve is still computed and printed |
+| *(no flag)* **— the production default** | `k = config.DEFAULT_K` (4.0), fixed by policy. The curve is still computed and printed. |
+| `--k 3.5` | fix a different k explicitly |
+| `--target 5` **— diagnostic only** | search k for the smallest value whose **median out-of-sample monthly count across all cells combined** is ≤ target. Stamps `k_mode: "target"` and puts a warning banner at the top of `summary.md`. |
+
+**Why the default is a fixed k.** *(Revised 2026-09-09 after the intended
+audience was identified as a regulatory review.)* A threshold whose value was
+selected by how few alerts it produced reads, to a reviewer, as a threshold
+tuned to suppress alerts — and the calibration table is then a written record of
+having tried 25 values and kept the least demanding one. The same table, with k
+fixed beforehand, is the opposite: evidence that the parameter's consequences
+were understood before it was set. So the threshold and the review budget are
+separated. The threshold defines what an outlier is, on a stated statistical
+rationale (`mean ± 4σ` covers 99.9937% of a normal population). Capacity is
+managed downstream by review *depth*, ranked on the `excess` column, with every
+breach recorded and dispositioned.
 
 The budget is **total across all groups**, per the requirement. k is a **single
 global value** applied to every cell — so a badly-behaved group cannot buy itself

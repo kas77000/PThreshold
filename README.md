@@ -29,19 +29,57 @@ On a fat-tailed book `sd` is inflated by the very orders the band exists to
 catch, so the sigma term can widen past the percentile floor and the rule
 quietly degenerates to pure k-sigma. That has to be visible, not inferred.
 
-## k is chosen, not assumed
+## k is set in advance; the alert count is an outcome
 
-`k = 4` is a statement about a Gaussian; this book is not one. So `fit` measures
-what each k costs, **leave-one-month-out**: for each month in the year, fit on
-the other eleven and score that one. Twelve out-of-sample observations, and
-therefore a range rather than a single flattering in-sample number.
+**`k = 4` is the production default and comes from policy, not from the alert
+count.** That ordering is the point. A threshold whose value was selected by how
+few alerts it produced reads, to any reviewer, as a threshold tuned to suppress
+alerts — so the default can never be able to look like that. `mean ± 4σ` covers
+99.9937% of a normal population and stands on its own rationale; how many orders
+fall outside is then a finding, not an input.
 
-    --target 5     solve for the smallest k whose median monthly count is <= 5
-    --k 4          fix k; the curve is still printed, so you see what it costs
+`fit` still measures what every k costs, **leave-one-month-out**: for each month
+in the year, fit on the other eleven and score that one. Twelve out-of-sample
+observations, and therefore a range rather than a single flattering in-sample
+number. That curve is sensitivity analysis — evidence that the consequences of
+the parameter were understood before it was set.
+
+    (no flag)      k = config.DEFAULT_K (4.0), fixed by policy   <- production
+    --k 3.5        fix a different k explicitly
+    --target 5     DIAGNOSTIC ONLY: solve for the smallest k whose median
+                   monthly count is <= 5. The band file records
+                   k_mode: "target" and summary.md carries a warning banner.
 
 The budget is the total across every cell, and k is one global value — a
 badly-behaved group cannot buy itself a wider band, it just contributes more of
-the five.
+the count.
+
+### What the rule actually does
+
+At k = 4 the `MAX` is inert: σ inflates faster than the 99.5th percentile does,
+so the sigma term wins on every tail thickness from Gaussian to Student-t with
+3 degrees of freedom. In practice the rule is `mean ± 4σ`, and the percentile is
+a floor that never activates. `hi_binds` / `lo_binds` record which term won on
+every cell, so this is measured rather than assumed.
+
+Note the direction: `MAX` takes the **wider** bound and therefore flags **fewer**
+orders. A rule guaranteeing that the worst 0.5% of each tail is always examined
+would need `MIN`, not `MAX`.
+
+### How many alerts will this give?
+
+It depends only on how fat the tails are, and the fit measures that for you.
+`bands.csv` carries `sd` and `mad_sigma` (the robust scale, 1.4826·MAD); their
+ratio says which regime the book is in:
+
+| `sd / mad_sigma` | Regime | Alerts/month per 3,000 orders |
+|---|---|---|
+| ~1.00 | normal | ~0.2 |
+| 1.10 | mildly fat | ~5 |
+| 1.20 | fat | ~11 |
+| >=1.30 | very fat | 15+ |
+
+Run `fit` on one real year and read that ratio before predicting anything.
 
 ## Running it
 

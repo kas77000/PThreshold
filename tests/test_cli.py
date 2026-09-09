@@ -67,6 +67,52 @@ def test_fit_freezes_the_k_it_used(tmp_path):
     assert bf.scope == "all"
 
 
+def test_the_production_default_is_a_fixed_k_of_4(tmp_path):
+    # With neither --k nor --target, k comes from policy, not from the alert
+    # count. A threshold whose value was chosen by how few alerts it produces
+    # is a threshold tuned to suppress alerts, and must never be the default.
+    year, _ = _year_and_month(tmp_path)
+    out = tmp_path / "fitdir"
+    assert cli.main(["fit", "--csv", year, "--out", str(out),
+                     "--min-cell-n", "100", "--k-grid", "2,8,1"]) == 0
+    bf = persist.read(str(out / "bands.json"))
+    assert bf.k == 4.0
+    assert bf.k_mode == "fixed"
+    assert bf.target is None, "a fixed-k band must not record a chosen target"
+
+
+def test_the_curve_is_still_produced_in_fixed_mode(tmp_path):
+    # The sensitivity analysis is evidence of a considered parameter choice.
+    # It is produced whether or not it was used to pick k.
+    year, _ = _year_and_month(tmp_path)
+    out = tmp_path / "fitdir"
+    cli.main(["fit", "--csv", year, "--out", str(out),
+              "--min-cell-n", "100", "--k-grid", "2,8,1"])
+    curve = pd.read_csv(out / "calibration.csv")
+    assert len(curve) == 7
+    assert (out / "calibration.png").exists()
+
+
+def test_target_mode_is_labelled_as_a_diagnostic_in_the_summary(tmp_path):
+    year, _ = _year_and_month(tmp_path)
+    out = tmp_path / "fitdir"
+    cli.main(["fit", "--csv", year, "--out", str(out), "--target", "5",
+              "--min-cell-n", "100", "--k-grid", "2,8,1"])
+    summary = (out / "summary.md").read_text(encoding="utf-8")
+    assert "DIAGNOSTIC" in summary
+    bf = persist.read(str(out / "bands.json"))
+    assert bf.k_mode == "target"
+
+
+def test_fixed_mode_carries_no_diagnostic_warning(tmp_path):
+    year, _ = _year_and_month(tmp_path)
+    out = tmp_path / "fitdir"
+    cli.main(["fit", "--csv", year, "--out", str(out), "--k", "4",
+              "--min-cell-n", "100", "--k-grid", "2,8,1"])
+    summary = (out / "summary.md").read_text(encoding="utf-8")
+    assert "DIAGNOSTIC" not in summary
+
+
 def test_fit_in_target_mode_solves_for_k_and_records_why(tmp_path):
     year, _ = _year_and_month(tmp_path, n_per_month=400, seed=52)
     out = tmp_path / "fitdir"

@@ -9,7 +9,7 @@ carried by colour alone, and must be readable without the legend.
 
 OVERFLOW BINS RATHER THAN A CLIPPED AXIS. A handful of extreme orders would
 otherwise squash the body of the distribution into one bar. The x-range is the
-band plus ten percent, and everything past it is clamped into the edge bins
+band plus a margin, and everything past it is clamped into the edge bins
 with the count printed there. Clamping and hiding are different things.
 
 THE CALIBRATION PLOT is the leave-one-month-out table drawn: k on the x-axis,
@@ -31,6 +31,8 @@ import matplotlib
 matplotlib.use("Agg")   # rendering to files, never to a display
 
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
@@ -66,8 +68,8 @@ def _fig(width=9.0, height=5.0):
 def _save(fig, out_path: str) -> str:
     directory = os.path.dirname(os.path.abspath(out_path))
     os.makedirs(directory, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(out_path, facecolor=fig.get_facecolor())
+    fig.savefig(out_path, facecolor=fig.get_facecolor(),
+                bbox_inches="tight")
     plt.close(fig)
     return out_path
 
@@ -100,8 +102,10 @@ def _bound_line(ax, x, color, solid: bool, label: str, y_frac: float,
                 xycoords=("data", "axes fraction"),
                 xytext=(-4 if right_half else 4, 0),
                 textcoords="offset points",
-                color=INK["text"], fontsize=8, va="top",
-                ha="right" if right_half else "left")
+                color=INK["text"], fontsize=8, va="top", zorder=5,
+                ha="right" if right_half else "left",
+                bbox=dict(facecolor=INK["surface"], edgecolor="none",
+                          boxstyle="round,pad=0.2", alpha=0.92))
 
 
 def distribution(values, band_row, out_path: str, title: str,
@@ -115,7 +119,7 @@ def distribution(values, band_row, out_path: str, title: str,
     fig, ax = _fig()
 
     if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
-        pad = 0.10 * (hi - lo)
+        pad = 0.16 * (hi - lo)
         x_lo, x_hi = lo - pad, hi + pad
     elif x.size:
         x_lo, x_hi = float(np.percentile(x, 0.5)), float(np.percentile(x, 99.5))
@@ -124,18 +128,31 @@ def distribution(values, band_row, out_path: str, title: str,
     else:
         x_lo, x_hi = -1.0, 1.0
 
+    # How many orders this band actually puts on a desk. Counted against the
+    # BAND, not against the display range -- the two differ by the padding.
+    if np.isfinite(lo) and np.isfinite(hi) and x.size:
+        n_low = int(np.count_nonzero(x < lo))
+        n_high = int(np.count_nonzero(x > hi))
+        outside = n_low + n_high
+        pct = 100.0 * outside / x.size
+        subtitle = (f"{outside:,} of {x.size:,} orders outside the band "
+                    f"({n_low:,} low, {n_high:,} high) — {pct:.3f}%")
+    else:
+        n_low = n_high = 0
+        subtitle = "no band fitted for this cell"
+
     clipped, below, above = clip_with_overflow(x, x_lo, x_hi)
     if clipped.size:
         ax.hist(clipped, bins=bins, range=(x_lo, x_hi),
-                color=INK["hist"], edgecolor=INK["surface"], linewidth=0.4,
-                label=f"fit window (n={clipped.size:,})")
+                color=INK["hist"], edgecolor=INK["surface"], linewidth=0.4)
 
+    month_n = 0
     if month_values is not None:
         m, _, _ = clip_with_overflow(month_values, x_lo, x_hi)
+        month_n = int(m.size)
         if m.size:
             ax.hist(m, bins=bins, range=(x_lo, x_hi), histtype="step",
-                    color=INK["month"], linewidth=2.0,
-                    label=f"scored month (n={m.size:,})")
+                    color=INK["month"], linewidth=2.0)
 
     hi_binds = str(band_row.get("hi_binds", ""))
     lo_binds = str(band_row.get("lo_binds", ""))
@@ -154,24 +171,50 @@ def distribution(values, band_row, out_path: str, title: str,
                         xycoords=("data", "axes fraction"),
                         xytext=(6 if ha == "left" else -6, 0),
                         textcoords="offset points", ha=ha,
-                        color=INK["text_secondary"], fontsize=8)
+                        color=INK["text_secondary"], fontsize=8, zorder=5,
+                        bbox=dict(facecolor=INK["surface"], edgecolor="none",
+                                  boxstyle="round,pad=0.25", alpha=0.92))
 
     ax.set_xlim(x_lo, x_hi)
     ax.set_xlabel("performance (spreads)", color=INK["text_secondary"])
     ax.set_ylabel("orders", color=INK["text_secondary"])
-    ax.set_title(title, color=INK["text"], fontsize=11, loc="left")
+    ax.set_title(title, color=INK["text"], fontsize=11, loc="left", pad=24)
+    # The count is the headline: it is what the band costs to review.
+    ax.annotate(subtitle, xy=(0, 1.015), xycoords="axes fraction",
+                color=INK["text"], fontsize=9.5, fontweight="bold")
 
-    caption = (f"k={float(band_row.get('k', float('nan'))):.2f}  "
-               f"P{float(band_row.get('percentile', float('nan'))):.1f}  "
-               f"band [{lo:.2f}, {hi:.2f}]  "
-               f"solid = the term that bound (low: {lo_binds or 'none'}, "
-               f"high: {hi_binds or 'none'})")
-    ax.annotate(caption, xy=(0, -0.16), xycoords="axes fraction",
+    pctile = float(band_row.get("percentile", float("nan")))
+    handles = [Patch(facecolor=INK["hist"], edgecolor="none",
+                     label=f"orders (n={x.size:,})")]
+    if month_n:
+        handles.append(Line2D([0], [0], color=INK["month"], lw=2,
+                              label=f"scored month (n={month_n:,})"))
+    handles += [
+        Line2D([0], [0], color=INK["sigma"], lw=2,
+               label="mean ± k·sd"),
+        Line2D([0], [0], color=INK["pct"], lw=2,
+               label=f"P{pctile:.1f} / P{100 - pctile:.1f}"),
+        Line2D([0], [0], color=INK["text_secondary"], lw=2, ls="-",
+               label="solid = the bound in force"),
+        Line2D([0], [0], color=INK["text_secondary"], lw=1.5, ls="--",
+               label="dashed = the other candidate"),
+    ]
+    ax.legend(handles=handles, frameon=False, fontsize=8, ncol=3,
+              loc="upper left", bbox_to_anchor=(0, -0.13),
+              labelcolor=INK["text_secondary"], handlelength=1.8,
+              columnspacing=1.6)
+
+    spread = float(band_row.get("spread_bps_median", float("nan")))
+    in_bps = (f"   =  [{lo * spread:+.0f}, {hi * spread:+.0f}] bps "
+              f"at the median spread of {spread:.1f} bps"
+              if np.isfinite(spread) and np.isfinite(lo) and np.isfinite(hi)
+              else "")
+    caption = (f"k={float(band_row.get('k', float('nan'))):.2f}   "
+               f"band [{lo:.2f}, {hi:.2f}] spreads{in_bps}\n"
+               f"bound by: low = {lo_binds or 'none'}, "
+               f"high = {hi_binds or 'none'}")
+    ax.annotate(caption, xy=(0, -0.34), xycoords="axes fraction",
                 color=INK["text_secondary"], fontsize=8)
-
-    handles, _ = ax.get_legend_handles_labels()
-    if len(handles) >= 2:
-        ax.legend(frameon=False, fontsize=8, labelcolor=INK["text_secondary"])
     return _save(fig, out_path)
 
 

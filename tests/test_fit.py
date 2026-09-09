@@ -129,3 +129,34 @@ def test_empty_frame_gives_an_empty_band_table_not_a_crash():
     res = fit.fit_cells(df, k=4.0, min_cell_n=100)
     assert len(res.bands) == 0
     assert list(res.bands.columns) == fit.BAND_COLS
+
+
+def test_the_cell_carries_its_own_average_spread():
+    # The metric is unitless (spreads), so the band cannot be read back in bps
+    # without knowing what a spread was worth for these orders.
+    df = _resolved()
+    res = fit.fit_cells(df, k=4.0, min_cell_n=100)
+    row = res.bands.set_index("cell_key").loc["VWAP|ALL"]
+    own = df[df[schema.CELL_KEY] == "VWAP|ALL"][schema.SPREAD_BPS]
+    assert row["spread_bps_median"] == pytest.approx(own.median())
+    assert row["spread_bps_mean"] == pytest.approx(own.mean())
+
+
+def test_an_inherited_band_still_reports_the_cells_own_spread():
+    # Bounds may come from the pooled parent, but the orders are these orders,
+    # so quoting the parent's spread would misprice the band in bps.
+    df = _resolved(scope="groups",
+                   market_groups={"TIGHT": ["HK"], "WIDE": ["JP"]},
+                   n_per_month=300, months=12)
+    jp = df[df[schema.MARKET] == "JP"]
+    res = fit.fit_cells(df, k=4.0, min_cell_n=len(jp) + 1)
+    row = res.bands.set_index("cell_key").loc["VWAP|WIDE"]
+    assert row["fallback_from"] != ""          # it did inherit
+    own = df[df[schema.CELL_KEY] == "VWAP|WIDE"][schema.SPREAD_BPS]
+    assert row["spread_bps_median"] == pytest.approx(own.median())
+
+
+def test_spread_columns_are_nan_when_the_extract_has_no_spread():
+    df = _resolved().drop(columns=[schema.SPREAD_BPS])
+    res = fit.fit_cells(df, k=4.0, min_cell_n=100)
+    assert res.bands["spread_bps_median"].isna().all()

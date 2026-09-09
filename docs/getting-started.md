@@ -126,7 +126,7 @@ loads, and it takes seconds to low minutes depending on size.
 | `calibration.csv` / `.png` | What every k costs, leave-one-month-out. |
 | `split_report.csv` | Per-market evidence on whether pooling is justified. |
 | `cleaning_report.csv` | Every excluded row, counted by reason. |
-| `distribution_<cell>.png` | The distribution with all four candidate bounds drawn. |
+| `distribution_<cell>.png` | The distribution with all four candidate bounds drawn, a legend, the band in bps, and **the number of orders outside the band** as the subtitle. |
 | `summary.md` | All of the above, readable. |
 
 ---
@@ -150,6 +150,18 @@ the ratio rises with tail weight:
 Under normality `mean ± 4σ` covers **99.9937%** of the population — so the
 expectation that the rule covers almost the whole spectrum is correct *if* the
 book is near-normal. This ratio is what tells you whether it is.
+
+### 1b. `spread_bps_median`, in `bands.csv`
+
+The metric is unitless — performance divided by the spread — so the bounds come
+out in *spreads*, not bps. This column is what converts them back:
+
+    band [-4.68, 4.33] spreads  x  median spread 9.0 bps  =  [-42, +39] bps
+
+That translation is printed on every distribution chart, and `spread_bps_mean`
+is carried alongside. A cell that inherited its bounds from a pooled parent
+still reports **its own** spread — the bounds may be borrowed, but the orders
+are not.
 
 ### 2. `hi_binds` / `lo_binds`, in `bands.csv`
 
@@ -194,6 +206,54 @@ python -m perfthreshold score --csv month.csv ^
 | `drift.csv` | This month's reference-feature medians against the fit-time baseline. |
 | `distribution_<cell>.png` | The month's distribution against the frozen bounds. |
 | `summary.md` | The readable version. |
+
+---
+
+## Reading the charts
+
+Every distribution chart carries, without needing the CSVs:
+
+- **The subtitle** — how many orders fall outside the band, split low/high, as a
+  count and a percentage. This is the review load that band implies.
+- **A legend** — blue is the `mean ± k·sd` term, orange is the percentile term;
+  **solid** is the bound actually in force and **dashed** is the candidate that
+  lost. Which term bound is the chart's real payload, so it is never carried by
+  colour alone.
+- **The `N beyond` labels** at each edge — orders clamped into the overflow bins.
+  The x-axis is trimmed to the band plus a margin so a handful of extremes
+  cannot squash the body of the distribution into one bar; clamping and hiding
+  are different things, so the counts stay on the chart.
+- **The caption** — k, the band in spreads, the same band in bps at the median
+  spread, and which term bound on each side.
+
+After `score`, the count is also the first thing printed:
+
+```
+==========================================================
+  2026-07   ->   10 ORDERS TO REVIEW
+==========================================================
+  out of 3,000 scored   (5 low, 5 high, 0 with no band)
+    TWAP|ALL                   4
+    VWAP|ALL                   6
+  queue   : review6-07\outliers.csv
+  summary : review6-07\summary.md
+```
+
+---
+
+## Why aren't `lo` and `hi` mirror images?
+
+Because `mean ± k·sd` is symmetric about the **mean**, and the mean is not zero.
+For a book averaging −0.18 spreads, the whole band sits shifted down by that
+amount: `mean − lo` and `hi − mean` are identical, while `|lo| > |hi|`.
+
+Worth knowing what that implies: **a mean-centred band cannot see systematic
+underperformance.** If the whole book drifted to −0.5 spreads next year, the band
+would slide down with it and flag just as few orders. It answers *"is this order
+unusual for this algo family?"* — not *"did this order miss the benchmark?"*
+Centring on zero would answer the second question instead. The shipped rule is
+mean-centred as specified; `drift.csv` is the compensating control, since it
+shows the centre moving even when the flag count does not.
 
 ---
 

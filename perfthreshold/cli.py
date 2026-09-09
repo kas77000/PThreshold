@@ -279,11 +279,20 @@ def cmd_score(args) -> int:
                 title=f"{str(cell).replace('|', ' | ')} -- {result.month}")
 
     _write_score_summary(args.out, band_file, result)
-    print(f"\n{result.month}: {result.counts['flagged']} flagged out of "
-          f"{result.counts['orders']:,} orders "
-          f"({result.counts['no_band']} with no band)")
-    for cell, n in sorted(result.counts["by_cell"].items()):
-        print(f"  {cell}: {n}")
+
+    # The headline is the number of orders someone now has to explain.
+    n = result.counts["flagged"]
+    rule_line = "=" * 58
+    print(f"\n{rule_line}")
+    print(f"  {result.month}   ->   {n} ORDER{'' if n == 1 else 'S'} TO REVIEW")
+    print(rule_line)
+    print(f"  out of {result.counts['orders']:,} scored   "
+          f"({result.counts['out_low']} low, {result.counts['out_high']} high, "
+          f"{result.counts['no_band']} with no band)")
+    for cell, count in sorted(result.counts["by_cell"].items()):
+        print(f"    {cell:<26} {count}")
+    print(f"  queue   : {os.path.join(args.out, 'outliers.csv')}")
+    print(f"  summary : {os.path.join(args.out, 'summary.md')}")
     if result.drift["warn"].any():
         print("\nDRIFT WARNING -- the book does not look like the fit window:")
         print(result.drift[result.drift["warn"]].to_string(index=False))

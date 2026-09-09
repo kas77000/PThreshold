@@ -33,6 +33,7 @@ ZONE = "zone"
 
 BAND_COLS = [
     "cell_key", schema.BENCHMARK, schema.MARKET_GROUP, "n",
+    "spread_bps_median", "spread_bps_mean",
     "mean", "sd", "median", "mad_sigma",
     "sigma_lo", "sigma_hi", "p_lo", "p_hi",
     "lo", "hi", "lo_binds", "hi_binds",
@@ -50,10 +51,16 @@ class FitResult:
 
 
 def _row(cell: str, benchmark: str, market_group: str, b: dict,
-         *, fitted: bool, fallback_from: str) -> dict:
+         *, fitted: bool, fallback_from: str,
+         spread_median: float = float("nan"),
+         spread_mean: float = float("nan")) -> dict:
     return {
         "cell_key": cell, schema.BENCHMARK: benchmark,
         schema.MARKET_GROUP: market_group, "n": b["n"],
+        # The metric is unitless (spreads). Carrying the cell's own spread is
+        # what lets a bound of 4.33 spreads be read back as ~35 bps -- without
+        # it the band cannot be translated into money by anyone reading it.
+        "spread_bps_median": spread_median, "spread_bps_mean": spread_mean,
         "mean": b["mean"], "sd": b["sd"],
         "median": b["median"], "mad_sigma": b["mad_sigma"],
         "sigma_lo": b["sigma_lo"], "sigma_hi": b["sigma_hi"],
@@ -87,9 +94,18 @@ def fit_cells(df: pd.DataFrame, k: float, percentile: float = 99.5,
         own = rule.bounds(g[schema.METRIC].to_numpy(dtype=float),
                           k=k, percentile=percentile)
 
+        # Always the cell's OWN spread, even when the band is inherited: the
+        # bounds may come from the parent, but the orders are these orders.
+        if schema.SPREAD_BPS in g.columns and g[schema.SPREAD_BPS].notna().any():
+            spread_median = float(g[schema.SPREAD_BPS].median())
+            spread_mean = float(g[schema.SPREAD_BPS].mean())
+        else:
+            spread_median = spread_mean = float("nan")
+        spreads = {"spread_median": spread_median, "spread_mean": spread_mean}
+
         if own["n"] >= min_cell_n:
             rows.append(_row(cell, bench, group_name, own,
-                             fitted=True, fallback_from=""))
+                             fitted=True, fallback_from="", **spreads))
         else:
             parent = parents.get(bench, {})
             pkey = groups.parent_key(cell)
@@ -99,12 +115,12 @@ def fit_cells(df: pd.DataFrame, k: float, percentile: float = 99.5,
                 inherited = dict(parent)
                 inherited["n"] = own["n"]   # the cell's own size, not the pool's
                 rows.append(_row(cell, bench, group_name, inherited,
-                                 fitted=False, fallback_from=pkey))
+                                 fitted=False, fallback_from=pkey, **spreads))
             else:
                 blank = rule.bounds(np.array([]), k=k, percentile=percentile)
                 blank["n"] = own["n"]
                 rows.append(_row(cell, bench, group_name, blank,
-                                 fitted=False, fallback_from=""))
+                                 fitted=False, fallback_from="", **spreads))
 
         medians[cell] = {
             f: (float(g[f].median()) if f in g.columns and g[f].notna().any()

@@ -144,7 +144,6 @@ orders like these. That baseline can only be captured at fit time.
 
 ## Design documents
 
-- `docs/superpowers/specs/2026-09-09-perfthreshold-design.md` — the design and
-  the reasoning behind each choice
-- `docs/superpowers/plans/2026-09-09-perfthreshold-v1.md` — the implementation
-  plan, task by task
+- `docs/2026-09-09-perfthreshold-design.md` — the design and the reasoning
+  behind each choice
+- `docs/2026-09-09-perfthreshold-v1.md` — the implementation plan, task by task

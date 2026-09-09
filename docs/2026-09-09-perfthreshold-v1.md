@@ -1,6 +1,7 @@
 # PerfThreshold v1 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Tasks are ordered by dependency and each ends with a green test run and a
+> commit. Steps use checkbox (`- [ ]`) syntax so progress can be tracked.
 
 **Goal:** Fit two-sided outlier thresholds on spread-normalised algo performance over a year of orders, choosing the sigma multiple against a monthly review budget, and apply the frozen result to a single later month.
 

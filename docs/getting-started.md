@@ -1,0 +1,250 @@
+# Getting started — your first run on real data
+
+Start to finish: from an extract to a review queue, and what to read on the way.
+
+---
+
+## Step 0 — Export two files, not one
+
+This is the part to get right, because the tool refuses the alternative. `fit`
+and `score` are separate commands with a file between them, and scoring a month
+the band already saw is blocked outright — a flag rate measured on the same
+orders that set the threshold is circular, and it looks entirely normal while
+being meaningless.
+
+| File | Contents |
+|---|---|
+| `year.csv` | ~12 months, e.g. **Jul 2025 → Jun 2026** |
+| `month.csv` | **one later month**, e.g. Jul or Aug 2026 — no overlap with the year |
+
+### Minimum header
+
+Same extract as the Threshold project:
+
+```
+aggrTgtId, Strategy, Sym, Date, ePvwap/Sprd, Pvwap, Sprd
+```
+
+### Worth including, and cheap
+
+| Columns | Why |
+|---|---|
+| `%Adv, Vol, PR, Dur` | These become the **drift baseline**. Their medians are stamped into `bands.json` at fit time and compared against each scored month, which is what separates *"the book got harder"* from *"execution got worse"*. This can only be captured at fit time — leave them out and you cannot reconstruct it later without refitting the whole year. |
+| `$Mln, #Shares, Side, %POST, %OPEN, %CLOSE, Rev30min` | These ride into `outliers.csv` as the diagnostic columns, so each flagged order can actually be explained rather than just named. |
+
+`.csv`, `.xlsx` and `.parquet` all work. Install the dependencies once:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Step 1 — Check the extract before trusting any number it produces
+
+```bash
+cd C:\Users\user\Desktop\Projects\PerfThreshold
+python -m perfthreshold check --csv year.csv
+```
+
+This command exists because two things about an extract cannot be read off a
+column name: which benchmark family each strategy belongs to, and whether the
+columns you need are actually populated. Both are invisible failures — a band
+fitted on the wrong benchmark still fits, still produces a plausible curve, and
+never announces itself.
+
+**Read section 1 closely.** It lists every distinct `Strategy` with its row count
+and the benchmark it maps to. Anything marked
+`*** UNMAPPED -- WILL BE EXCLUDED ***` is dropped from the entire exercise —
+excluded and named, never quietly defaulted into a family.
+
+Section 2 gives rows per market. Section 3 gives missing-value counts per
+required column. Section 4 loads the file for real and prints the cleaning
+report, where `rows kept` plus every drop count always equals `rows in`.
+
+---
+
+## Step 2 — Edit two values in `perfthreshold/config.py`
+
+### `ALGO_BENCHMARK`
+
+Add every real strategy name that section 1 showed you. Your desk's algos are
+almost certainly not literally called `VWAP` and `TMX`:
+
+```python
+ALGO_BENCHMARK = {
+    "VWAP": "VWAP",
+    "TWAP": "TWAP",
+    "TMX":  "TWAP",     # the desk's name for the TWAP family
+    # add the real names here, e.g.:
+    # "VWAP_PASSIVE": "VWAP",
+    # "TMX_AGGR":     "TWAP",
+}
+```
+
+Keys are matched upper-cased and stripped, so case and stray whitespace don't
+matter. Complete this map from what `check` printed, never from memory.
+
+### `MIN_CELL_N`
+
+Currently `2000`, a placeholder chosen without sight of your order counts. It is
+the minimum number of orders a cell needs before a band is fitted on it at all.
+
+It matters because a thin cell fails in a counter-intuitive direction: with few
+observations the tail has probably not been sampled yet, so `sd` comes out
+**too small**, the band comes out **too narrow**, and the smallest market looks
+like the worst offender in the book purely because it is small.
+
+Leave it at 2000 while everything is pooled (`--scope all`). It becomes the
+decisive setting the moment you split APAC into groups.
+
+**Re-run `check` until nothing you want to keep is listed as UNMAPPED.**
+
+---
+
+## Step 3 — Fit
+
+```bash
+python -m perfthreshold fit --csv year.csv --out fits\2025-07_2026-06\ --k-grid 3,6,0.25
+```
+
+Note there is **no `--k` and no `--target`**. That gives you `k = 4` from
+`config.DEFAULT_K` — set in advance from policy, not selected from the alert
+count. See [`../README.md`](../README.md) for why that ordering is the whole
+point.
+
+The narrower `--k-grid` keeps this first run quick. The default grid
+(2 → 8 by 0.1) is 61 × 12 = 732 fits; perfectly fine once you know the file
+loads, and it takes seconds to low minutes depending on size.
+
+### What `fit` writes
+
+| File | What it is |
+|---|---|
+| `bands.json` | The frozen artifact. `score` needs nothing else. Carries the rule, the observed fit window, group definitions, reference medians, the calibration table and provenance (source filename + content hash). |
+| `bands.csv` | The same per-cell rows, readable. |
+| `calibration.csv` / `.png` | What every k costs, leave-one-month-out. |
+| `split_report.csv` | Per-market evidence on whether pooling is justified. |
+| `cleaning_report.csv` | Every excluded row, counted by reason. |
+| `distribution_<cell>.png` | The distribution with all four candidate bounds drawn. |
+| `summary.md` | All of the above, readable. |
+
+---
+
+## Step 4 — The three numbers to read
+
+### 1. `sd ÷ mad_sigma`, in `bands.csv`
+
+This settles how many alerts to expect, and it is the number to have in hand
+before anyone predicts anything. `sd` is the classical scale; `mad_sigma` is the
+robust one (1.4826 × MAD). Under normality they are equal by construction, and
+the ratio rises with tail weight:
+
+| `sd / mad_sigma` | Regime | Alerts/month per 3,000 orders |
+|---|---|---|
+| ≈ 1.00 | normal | ~0.2 (about 2 per **year**) |
+| 1.10 | mildly fat | ~5 |
+| 1.20 | fat | ~11 |
+| ≥ 1.30 | very fat | 15+ |
+
+Under normality `mean ± 4σ` covers **99.9937%** of the population — so the
+expectation that the rule covers almost the whole spectrum is correct *if* the
+book is near-normal. This ratio is what tells you whether it is.
+
+### 2. `hi_binds` / `lo_binds`, in `bands.csv`
+
+Expect `sigma` on every row. σ inflates faster than the 99.5th percentile does,
+so at k = 4 the `MAX` always picks the sigma term — on every tail thickness from
+Gaussian to Student-t with 3 degrees of freedom. In practice the rule is
+`mean ± 4σ` and the percentile is a floor that never activates.
+
+Two consequences worth knowing before you are asked:
+
+- You are defending a **4σ rule**, not a two-part rule.
+- `MAX` takes the **wider** bound and therefore flags **fewer** orders. If the
+  intent behind including P99.5 was *"we always examine at least the worst 0.5%
+  of each tail"*, the rule does not do that — that guarantee needs `MIN`, not
+  `MAX`. The two are opposite in effect, and the band file records which term
+  bound on every cell.
+
+### 3. `median_flags` at k = 4.00, in `calibration.csv`
+
+Together with its `min_flags`–`max_flags` range. This is the honest
+out-of-sample estimate of monthly review load: twelve months, each scored by a
+band fitted on the other eleven, so no month ever helped set the threshold that
+judges it.
+
+The **range** is the number that matters. A median of 5 with a worst month of 12
+is a different proposition from a median of 5 with a worst month of 6, and an
+average alone hides the difference.
+
+---
+
+## Step 5 — Score the month
+
+```bash
+python -m perfthreshold score --csv month.csv ^
+    --bands fits\2025-07_2026-06\bands.json --out review\2026-07\
+```
+
+| File | What it is |
+|---|---|
+| `outliers.csv` | The review queue, ranked by `excess` — how far outside the band each order sits, in spreads. Carries the diagnostic columns needed to explain each one. |
+| `scored_orders.csv` | Every order with its cell, bounds and zone. |
+| `drift.csv` | This month's reference-feature medians against the fit-time baseline. |
+| `distribution_<cell>.png` | The month's distribution against the frozen bounds. |
+| `summary.md` | The readable version. |
+
+---
+
+## Three ways the first run bites
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Every order comes back `NO_BAND` | The cell holds fewer than `MIN_CELL_N` (2000) orders — usual when smoke-testing on a small slice | Add `--min-cell-n 100` for the test, then put it back |
+| `exit 2`, *"overlaps the band's fit window"* | The two files share a month | Working as intended. Re-cut the export so they don't overlap |
+| *"Extract is missing required column(s): …"* | A column was renamed in the extract | Map the new name in `config.COLUMN_MAP` |
+
+---
+
+## Scope: pooled, grouped, or one group
+
+The first run should be `--scope all` (the default): every market pooled, one
+cell per benchmark. That is defensible because the metric is already divided by
+the spread, which puts a wide small cap and a tight large cap on one scale
+before the band is fitted.
+
+When you want to test grouping, declare the groups in `config.MARKET_GROUPS`
+and then choose how they are used:
+
+```bash
+--scope all                 every market pooled; one cell per benchmark
+--scope groups              one cell per declared MARKET_GROUPS entry
+--scope group:APAC_TIGHT    that group only; other markets excluded entirely
+--benchmark VWAP            and orthogonally, restrict to one family
+```
+
+The scope is stamped into `bands.json` and enforced when the band is applied, so
+a band fitted one way cannot be silently scored another.
+
+Before changing the grouping, read `split_report.csv` from the pooled fit. It
+answers *should this market be split out?* in review workload rather than in
+abstract distributional distance: for each market, how many flags does the
+**pooled** band produce that the market's **own** band would not. A market being
+handed 31 extra reviews a year by pooling has earned its own cell.
+
+---
+
+## Known gaps to close before this is production
+
+- **Arrival-benchmarked algos (`PART`, `POV`, IS) receive no surveillance.**
+  They are excluded at load like any unmapped strategy. Interval VWAP and
+  arrival price are different benchmarks and must never share a band, so this
+  needs either a second band fitted on `eIS/Sprd` or a documented compensating
+  control. An unmonitored population is a harder question to answer than a
+  debatable threshold.
+- **`MIN_CELL_N` is still a placeholder.** Set it from real counts before
+  splitting markets.
+- **`bands.json` records provenance but not governance** — who approved the
+  parameters, when they take effect, when they are reviewed. That is the
+  difference between a script's output and a controlled artifact.

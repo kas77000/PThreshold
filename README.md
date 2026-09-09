@@ -83,6 +83,10 @@ Run `fit` on one real year and read that ratio before predicting anything.
 
 ## Running it
 
+**New here? Start with [`docs/getting-started.md`](docs/getting-started.md)** —
+the step-by-step first run on real data, what to edit in `config.py`, and the
+three numbers to read afterwards.
+
     pip install -r requirements.txt
 
     python -m perfthreshold check --csv year.csv
@@ -142,8 +146,9 @@ worse — and they call for opposite actions. `drift.csv` compares this month's
 the band was fitted. A move past the threshold means the band was not fitted on
 orders like these. That baseline can only be captured at fit time.
 
-## Design documents
+## Documents
 
+- `docs/getting-started.md` — first run on real data, start to finish
 - `docs/2026-09-09-perfthreshold-design.md` — the design and the reasoning
   behind each choice
 - `docs/2026-09-09-perfthreshold-v1.md` — the implementation plan, task by task

@@ -304,8 +304,12 @@ one be explained: `Side`, `%POST`, auction %, `Rev30min`, `$Mln`, `%Adv`, `Vol`,
 
 **`summary.md`** — count against expectation, the drift table, links to plots.
 
-**`distribution_<cell>.png`** — redrawn with the scored month overlaid on the fit
-distribution, flagged orders marked.
+**`distribution_<cell>.png`** — the scored month's own distribution with the
+frozen bounds drawn on it. Not an overlay on the fit year: `bands.json` carries
+the year's *summary statistics*, not its raw values, and storing a year of
+observations in the artifact to enable a background histogram is not worth the
+weight. The comparison a reviewer needs — this month against the bounds it is
+being judged by — is exactly what this shows.
 
 ### The drift check
 

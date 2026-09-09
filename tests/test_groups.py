@@ -105,3 +105,35 @@ def test_wildcard_group_under_scope_groups_catches_everything():
     out, excl = groups.resolve(df, scope="groups", market_groups={"ALL": "*"})
     assert len(out) == len(df)
     assert sum(excl.values()) == 0
+
+
+def test_scope_markets_gives_every_market_its_own_cell():
+    # No declaration needed: the market IS the group. Listing markets by hand
+    # in MARKET_GROUPS silently drops any you forget to list.
+    df = _prepared()
+    out, excl = groups.resolve(df, scope="markets")
+    assert set(out[schema.MARKET_GROUP]) == set(df[schema.MARKET])
+    assert set(out[schema.CELL_KEY]) == {
+        f"{b}|{m}" for b, m in zip(df[schema.BENCHMARK], df[schema.MARKET])}
+    assert len(out) == len(df)
+    assert sum(excl.values()) == 0
+
+
+def test_scope_markets_ignores_declared_groups():
+    df = _prepared()
+    out, _ = groups.resolve(df, scope="markets",
+                            market_groups={"TIGHT": ["HK"]})
+    assert "TIGHT" not in set(out[schema.MARKET_GROUP])
+    assert "HK" in set(out[schema.MARKET_GROUP])
+
+
+def test_scope_markets_parses():
+    assert groups.parse_scope("markets") == ("markets", None)
+
+
+def test_scope_markets_composes_with_a_benchmark_filter():
+    df = _prepared()
+    out, excl = groups.resolve(df, scope="markets", benchmark="VWAP")
+    assert set(out[schema.BENCHMARK]) == {"VWAP"}
+    assert all(c.startswith("VWAP|") for c in out[schema.CELL_KEY])
+    assert len(out) + sum(excl.values()) == len(df)

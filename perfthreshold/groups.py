@@ -10,6 +10,7 @@ an error.
 Scope is the only thing that varies:
 
     all              every market pooled; one cell per benchmark
+    markets          one cell per (benchmark x market), no declaration needed
     groups           one cell per (benchmark x declared group)
     group:NAME       that group only; every other market excluded
 
@@ -24,6 +25,7 @@ import pandas as pd
 from perfthreshold import config, schema
 
 SCOPE_ALL = "all"
+SCOPE_MARKETS = "markets"
 SCOPE_GROUPS = "groups"
 GROUP_PREFIX = "group:"
 
@@ -47,6 +49,8 @@ def parse_scope(scope: str) -> tuple[str, str | None]:
     s = str(scope).strip()
     if s == SCOPE_ALL:
         return SCOPE_ALL, None
+    if s == SCOPE_MARKETS:
+        return SCOPE_MARKETS, None
     if s == SCOPE_GROUPS:
         return SCOPE_GROUPS, None
     if s.startswith(GROUP_PREFIX):
@@ -55,7 +59,8 @@ def parse_scope(scope: str) -> tuple[str, str | None]:
             raise ValueError("scope 'group:' needs a group name after the colon")
         return "group", name
     raise ValueError(
-        f"Unknown scope {scope!r}. Use 'all', 'groups', or 'group:NAME'.")
+        f"Unknown scope {scope!r}. Use 'all', 'markets', 'groups', "
+        f"or 'group:NAME'.")
 
 
 def cell_key(benchmark: str, market_group: str) -> str:
@@ -101,6 +106,11 @@ def resolve(df: pd.DataFrame, scope: str = SCOPE_ALL,
         # Declared groups are deliberately ignored here: scope=all means one
         # pooled cell per benchmark, whatever config happens to declare.
         out[schema.MARKET_GROUP] = ALL_GROUP
+    elif kind == SCOPE_MARKETS:
+        # The market IS the group. No declaration, so nothing can be left out
+        # by forgetting to list it -- the failure mode of spelling every
+        # market into MARKET_GROUPS by hand.
+        out[schema.MARKET_GROUP] = out[schema.MARKET].astype(str)
     else:
         assigned = out[schema.MARKET].map(
             lambda m: config.market_group_for(m, market_groups))

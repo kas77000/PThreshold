@@ -279,10 +279,21 @@ and then choose how they are used:
 
 ```bash
 --scope all                 every market pooled; one cell per benchmark
+--scope markets             one cell per (benchmark x market)
 --scope groups              one cell per declared MARKET_GROUPS entry
 --scope group:APAC_TIGHT    that group only; other markets excluded entirely
 --benchmark VWAP            and orthogonally, restrict to one family
 ```
+
+`--scope markets` needs no declaration — the market *is* the group — so nothing
+can be dropped by forgetting to list it, which is the failure mode of spelling
+every market into `MARKET_GROUPS` by hand.
+
+**`MIN_CELL_N` becomes the binding constraint here.** Splitting a year across
+markets and benchmarks divides the book many ways; any cell that lands below the
+minimum inherits its benchmark-pooled parent's bounds and records
+`fallback_from`, so check that column before trusting a per-market band. A cell
+showing a `fallback_from` value was not fitted on its own orders.
 
 The scope is stamped into `bands.json` and enforced when the band is applied, so
 a band fitted one way cannot be silently scored another.

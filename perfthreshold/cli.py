@@ -338,7 +338,7 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--csv", required=True)
     f.add_argument("--out", required=True)
     f.add_argument("--scope", default=groups.SCOPE_ALL,
-                   help="all | groups | group:NAME")
+                   help="all | markets | groups | group:NAME")
     f.add_argument("--benchmark", default=None,
                    help="restrict to one benchmark family")
     f.add_argument("--percentile", type=float, default=config.PERCENTILE)

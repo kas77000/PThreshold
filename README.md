@@ -110,6 +110,7 @@ and `summary.md`.
 ## Scope
 
     --scope all                 every market pooled; one cell per benchmark
+    --scope markets             one cell per (benchmark x market)
     --scope groups              one cell per declared MARKET_GROUPS entry
     --scope group:APAC_TIGHT    that group only
     --benchmark VWAP            and orthogonally, one family

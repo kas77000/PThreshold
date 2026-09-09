@@ -1,4 +1,17 @@
 pandas>=2.0
 numpy>=1.24
 matplotlib>=3.7
+
+# summary.md is written with DataFrame.to_markdown(), which needs tabulate.
+# Without it `fit` and `score` raise at the very last step, after doing all
+# the work.
+tabulate>=0.9
+
+# Only needed to read .xlsx extracts. Harmless if you always export .csv.
+openpyxl>=3.1
+
+# Only needed to read .parquet extracts.
+pyarrow>=14.0
+
+# Tests only
 pytest>=7.0

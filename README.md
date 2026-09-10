@@ -149,6 +149,12 @@ orders like these. That baseline can only be captured at fit time.
 
 ## Documents
 
+- `docs/method.md` — **how it proceeds**: every operation between the raw
+  extract and the review queue, the exact arithmetic, what is refused, what the
+  method does *not* do, and where to check each claim
+- `docs/fat-tails.md` — **why it is hard**: the tail behaviour every choice in
+  the method is a response to, demonstrated with measurements rather than claims
+  (`docs/fat_tails_experiments.py` regenerates every table)
 - `docs/getting-started.md` — first run on real data, start to finish
 - `docs/2026-09-09-perfthreshold-design.md` — the design and the reasoning
   behind each choice

@@ -85,6 +85,22 @@ def clip_with_overflow(values, x_lo: float, x_hi: float):
     return np.clip(a, x_lo, x_hi), below, above
 
 
+def breach_counts(values, lo: float, hi: float) -> tuple[int, int]:
+    """Orders below and above the BAND. Not the same as clip_with_overflow.
+
+    These two counts are what the band puts on a desk, and they sum to the
+    figure in the chart's subtitle. `clip_with_overflow` counts something
+    different -- observations beyond the drawn AXIS, which is deliberately
+    wider than the band, so an order can breach the band and still be on
+    scale. Conflating the two makes the numbers on the chart fail to add up.
+    """
+    a = np.asarray(values, dtype=float).ravel()
+    a = a[np.isfinite(a)]
+    if a.size == 0 or not (np.isfinite(lo) and np.isfinite(hi)):
+        return 0, 0
+    return int(np.count_nonzero(a < lo)), int(np.count_nonzero(a > hi))
+
+
 def _bound_line(ax, x, color, solid: bool, label: str, y_frac: float,
                 x_lo: float, x_hi: float):
     """One candidate bound, labelled on whichever side has room.
@@ -128,17 +144,13 @@ def distribution(values, band_row, out_path: str, title: str,
     else:
         x_lo, x_hi = -1.0, 1.0
 
-    # How many orders this band actually puts on a desk. Counted against the
-    # BAND, not against the display range -- the two differ by the padding.
+    n_low, n_high = breach_counts(x, lo, hi)
     if np.isfinite(lo) and np.isfinite(hi) and x.size:
-        n_low = int(np.count_nonzero(x < lo))
-        n_high = int(np.count_nonzero(x > hi))
         outside = n_low + n_high
         pct = 100.0 * outside / x.size
         subtitle = (f"{outside:,} of {x.size:,} orders outside the band "
                     f"({n_low:,} low, {n_high:,} high) — {pct:.3f}%")
     else:
-        n_low = n_high = 0
         subtitle = "no band fitted for this cell"
 
     clipped, below, above = clip_with_overflow(x, x_lo, x_hi)
@@ -165,13 +177,19 @@ def distribution(values, band_row, out_path: str, title: str,
     _bound_line(ax, float(band_row.get("p_lo", np.nan)), INK["pct"],
                 lo_binds == "percentile", "P-low", 0.72, x_lo, x_hi)
 
-    for count, xpos, ha in ((below, x_lo, "left"), (above, x_hi, "right")):
-        if count:
-            ax.annotate(f"{count:,} beyond", xy=(xpos, 0.02),
+    # The count that matters, placed against the bound it belongs to and on
+    # the OUTSIDE of it, so the two numbers add up to the subtitle. These are
+    # breaches of the band -- deliberately not the same quantity as the
+    # off-scale counts below, which are an artefact of trimming the axis.
+    for count, bound, side in ((n_low, lo, "left"), (n_high, hi, "right")):
+        if count and np.isfinite(bound):
+            ax.annotate(f"{count:,} outside", xy=(bound, 0.46),
                         xycoords=("data", "axes fraction"),
-                        xytext=(6 if ha == "left" else -6, 0),
-                        textcoords="offset points", ha=ha,
-                        color=INK["text_secondary"], fontsize=8, zorder=5,
+                        xytext=(-6 if side == "left" else 6, 0),
+                        textcoords="offset points",
+                        ha="right" if side == "left" else "left",
+                        color=INK["text"], fontsize=8.5, fontweight="bold",
+                        zorder=6,
                         bbox=dict(facecolor=INK["surface"], edgecolor="none",
                                   boxstyle="round,pad=0.25", alpha=0.92))
 
@@ -209,10 +227,16 @@ def distribution(values, band_row, out_path: str, title: str,
               f"at the median spread of {spread:.1f} bps"
               if np.isfinite(spread) and np.isfinite(lo) and np.isfinite(hi)
               else "")
+    # The axis is trimmed, so say how many observations were clamped into the
+    # end bins. This is NOT the breach count -- the axis is wider than the
+    # band, so an order can be outside the band and still on scale.
+    off_scale = ("" if not (below or above) else
+                 f"   axis trimmed: {below + above:,} order(s) drawn in the "
+                 f"end bins ({below:,} left, {above:,} right)")
     caption = (f"k={float(band_row.get('k', float('nan'))):.2f}   "
                f"band [{lo:.2f}, {hi:.2f}] spreads{in_bps}\n"
                f"bound by: low = {lo_binds or 'none'}, "
-               f"high = {hi_binds or 'none'}")
+               f"high = {hi_binds or 'none'}{off_scale}")
     ax.annotate(caption, xy=(0, -0.34), xycoords="axes fraction",
                 color=INK["text_secondary"], fontsize=8)
     return _save(fig, out_path)

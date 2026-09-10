@@ -110,3 +110,36 @@ def test_calibration_on_an_empty_curve_writes_a_file_saying_so(tmp_path):
     curve = pd.DataFrame(columns=calibrate.CURVE_COLS)
     out = plots.calibration(curve, str(tmp_path / "c.png"), target=5)
     assert os.path.exists(out)
+
+
+def test_breach_counts_are_measured_against_the_band():
+    x = np.array([-10.0, -2.0, 0.0, 2.0, 10.0])
+    assert plots.breach_counts(x, lo=-1.0, hi=1.0) == (2, 2)
+
+
+def test_breach_counts_and_overflow_counts_are_different_quantities():
+    # The regression this pins: the chart draws the axis WIDER than the band,
+    # so an order can breach the band and still be on scale. Reporting the
+    # off-scale count where the breach count belongs makes the numbers on the
+    # chart fail to add up to the subtitle.
+    # -1.2 and +1.2 breach the band but sit inside the padded axis, which is
+    # exactly the population the two counts disagree about.
+    x = np.array([-3.0, -1.2, 0.0, 1.2, 3.0])
+    lo, hi = -1.0, 1.0
+    pad = 0.16 * (hi - lo)
+    n_low, n_high = plots.breach_counts(x, lo, hi)
+    _, below, above = plots.clip_with_overflow(x, lo - pad, hi + pad)
+    assert (n_low, n_high) == (2, 2)      # four orders breach the band
+    assert (below, above) == (1, 1)       # only two are off the drawn axis
+    assert n_low + n_high > below + above
+
+
+def test_breach_counts_are_zero_without_a_band():
+    x = np.array([1.0, 2.0, 3.0])
+    assert plots.breach_counts(x, lo=np.nan, hi=1.0) == (0, 0)
+    assert plots.breach_counts(np.array([]), lo=-1.0, hi=1.0) == (0, 0)
+
+
+def test_breach_counts_ignore_non_finite_values():
+    x = np.array([np.nan, np.inf, -np.inf, 5.0])
+    assert plots.breach_counts(x, lo=-1.0, hi=1.0) == (0, 1)

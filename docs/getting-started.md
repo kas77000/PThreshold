@@ -2,6 +2,10 @@
 
 Start to finish: from an extract to a review queue, and what to read on the way.
 
+For what the program is *doing* at each of these steps — the arithmetic, the
+refusals, and the answer to every "but how do you know" — see
+[`method.md`](method.md).
+
 ---
 
 ## Step 0 — Export two files, not one
@@ -151,6 +155,12 @@ Under normality `mean ± 4σ` covers **99.9937%** of the population — so the
 expectation that the rule covers almost the whole spectrum is correct *if* the
 book is near-normal. This ratio is what tells you whether it is.
 
+The table is measured, not theoretical, and it saturates: above a ratio of about
+1.6 the count stops rising and its own estimate becomes noisy, so read
+`median_flags` from `calibration.csv` rather than extrapolating.
+[`fat-tails.md`](fat-tails.md) has the measurements and what else the ratio
+implies.
+
 ### 1b. `spread_bps_median`, in `bands.csv`
 
 The metric is unitless — performance divided by the spread — so the bounds come
@@ -219,10 +229,15 @@ Every distribution chart carries, without needing the CSVs:
   **solid** is the bound actually in force and **dashed** is the candidate that
   lost. Which term bound is the chart's real payload, so it is never carried by
   colour alone.
-- **The `N beyond` labels** at each edge — orders clamped into the overflow bins.
-  The x-axis is trimmed to the band plus a margin so a handful of extremes
-  cannot squash the body of the distribution into one bar; clamping and hiding
-  are different things, so the counts stay on the chart.
+- **The `N outside` labels**, sitting just beyond each bound — orders that
+  breached the band on that side. These two **add up to the subtitle**.
+- **The `axis trimmed:` note in the caption** — a different quantity, and the
+  distinction matters. The x-axis is drawn as the band plus a margin, so a
+  handful of extremes cannot squash the body of the distribution into one bar.
+  Orders past the drawn axis are clamped into the end bins, and that count is
+  disclosed because clamping and hiding are different things. It is a *subset*
+  of the breaches: the axis is wider than the band, so an order can be outside
+  the band and still on scale. Do not expect it to match the subtitle.
 - **The caption** — k, the band in spreads, the same band in bps at the median
   spread, and which term bound on each side.
 

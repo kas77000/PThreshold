@@ -48,6 +48,7 @@ INK = {
     "pct": "#eb6834",       # categorical slot 2
     "month": "#4a3aa7",     # categorical slot 7, for the scored-month overlay
     "target": "#0ca30c",    # status: good
+    "normal": "#e34948",    # categorical slot 8: the assumed Gaussian
 }
 
 
@@ -125,7 +126,8 @@ def _bound_line(ax, x, color, solid: bool, label: str, y_frac: float,
 
 
 def distribution(values, band_row, out_path: str, title: str,
-                 month_values=None, bins: int = 80) -> str:
+                 month_values=None, bins: int = 80,
+                 show_normal: bool = True) -> str:
     """Histogram of the metric with all four candidate bounds drawn."""
     x = np.asarray(values, dtype=float).ravel()
     x = x[np.isfinite(x)]
@@ -157,6 +159,19 @@ def distribution(values, band_row, out_path: str, title: str,
     if clipped.size:
         ax.hist(clipped, bins=bins, range=(x_lo, x_hi),
                 color=INK["hist"], edgecolor=INK["surface"], linewidth=0.4)
+
+    # The fitted normal, scaled to the histogram. This is the distribution the
+    # coverage claim assumes -- drawing it lets the gap be seen rather than
+    # argued about, which is the point of putting it on the chart at all.
+    normal_drawn = False
+    mu = float(band_row.get("mean", np.nan))
+    sd = float(band_row.get("sd", np.nan))
+    if show_normal and clipped.size and np.isfinite(mu) and sd > 0:
+        grid = np.linspace(x_lo, x_hi, 400)
+        pdf = np.exp(-0.5 * ((grid - mu) / sd) ** 2) / (sd * np.sqrt(2 * np.pi))
+        ax.plot(grid, pdf * clipped.size * (x_hi - x_lo) / bins,
+                color=INK["normal"], linewidth=2.0, zorder=4)
+        normal_drawn = True
 
     month_n = 0
     if month_values is not None:
@@ -207,6 +222,9 @@ def distribution(values, band_row, out_path: str, title: str,
     if month_n:
         handles.append(Line2D([0], [0], color=INK["month"], lw=2,
                               label=f"scored month (n={month_n:,})"))
+    if normal_drawn:
+        handles.append(Line2D([0], [0], color=INK["normal"], lw=2,
+                              label="the normal the rule assumes"))
     handles += [
         Line2D([0], [0], color=INK["sigma"], lw=2,
                label="mean ± k·sd"),
@@ -286,4 +304,99 @@ def calibration(curve_df: pd.DataFrame, out_path: str, target: int,
     # Headroom so the range band does not sit flush against the frame.
     ax.set_ylim(bottom=0, top=float(c["max_flags"].max()) * 1.15 + 1.0)
     ax.legend(frameon=False, fontsize=8, labelcolor=INK["text_secondary"])
+    return _save(fig, out_path)
+
+
+def qq(values, out_path: str, title: str, k: float = 4.0,
+       max_points: int = 6000) -> str:
+    """Normal QQ plot: the single clearest picture of a non-Gaussian tail.
+
+    Both axes are in standard deviations, so the 45-degree line is "the data
+    is normal". Fat tails bend AWAY from that line at both ends -- the extreme
+    order statistics sit further out than a Gaussian would put them -- and the
+    size of that departure at +/- k is exactly the coverage shortfall the band
+    suffers. Guides are drawn at +/- k so the reader can see where the rule's
+    bound falls relative to where the data actually goes.
+
+    A book with 18,000 orders makes 18,000 markers, which is a heavy PNG and
+    an unreadable smear. The body is subsampled; the tails never are, because
+    the tails are the entire point.
+    """
+    a = np.asarray(values, dtype=float).ravel()
+    a = np.sort(a[np.isfinite(a)])
+    fig, ax = _fig(width=6.4, height=6.0)
+
+    if a.size < 3:
+        ax.annotate("too few orders for a QQ plot", xy=(0.5, 0.5),
+                    xycoords="axes fraction", ha="center",
+                    color=INK["text_secondary"], fontsize=10)
+        ax.set_xticks([]); ax.set_yticks([])
+        return _save(fig, out_path)
+
+    from perfthreshold import normality
+
+    z = (a - a.mean()) / a.std(ddof=1)
+    theory = normality.theoretical_quantiles(a.size)
+
+    if a.size > max_points:
+        # Keep every point in the tails; thin only the crowded middle.
+        edge = max(50, max_points // 10)
+        idx = np.unique(np.concatenate([
+            np.arange(edge),
+            np.linspace(edge, a.size - edge - 1,
+                        max_points - 2 * edge).astype(int),
+            np.arange(a.size - edge, a.size)]))
+    else:
+        idx = np.arange(a.size)
+
+    # Framing the view. A single order at -40 sd would otherwise set the axes
+    # and squash the informative S-curve into a sliver, so the view is sized
+    # to the theoretical range and the bulk of the observed tail. Points past
+    # it are counted and named rather than silently dropped -- and the most
+    # extreme value is worth printing anyway, being the sharpest single number
+    # on the chart.
+    lim = float(max(np.abs(theory).max(),
+                    np.percentile(np.abs(z), 99.9))) * 1.15
+    off = int(np.count_nonzero(np.abs(z) > lim))
+    ax.plot([-lim, lim], [-lim, lim], color=INK["normal"], linewidth=2.0,
+            zorder=3, label="if the data were normal")
+    ax.scatter(theory[idx], z[idx], s=6, color=INK["sigma"], alpha=0.55,
+               linewidths=0, zorder=4, label=f"observed (n={a.size:,})")
+
+    for bound in (-k, k):
+        ax.axvline(bound, color=INK["text_secondary"], linewidth=1.0,
+                   linestyle=":", zorder=2)
+    ax.annotate(f"±{k:g} sd", xy=(k, 0.985),
+                xycoords=("data", "axes fraction"), xytext=(4, 0),
+                textcoords="offset points", va="top",
+                color=INK["text_secondary"], fontsize=8)
+
+    s = normality.stats(a, k=k)
+    ax.set_title(title, color=INK["text"], fontsize=11, loc="left", pad=24)
+    ax.annotate(
+        f"beyond ±{k:g} sd: {s['observed_beyond']:,} observed vs "
+        f"{s['expected_beyond']:.1f} expected if normal "
+        f"({s['tail_ratio']:.0f}x) — {s['verdict']}",
+        xy=(0, 1.015), xycoords="axes fraction", color=INK["text"],
+        fontsize=9.5, fontweight="bold")
+
+    ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel("normal quantile (sd)", color=INK["text_secondary"])
+    ax.set_ylabel("observed quantile (sd)", color=INK["text_secondary"])
+    ax.legend(frameon=False, fontsize=8, loc="lower right",
+              labelcolor=INK["text_secondary"])
+    if off:
+        ax.annotate(
+            f"{off:,} order(s) beyond this view; most extreme "
+            f"{z[np.argmax(np.abs(z))]:+.1f} sd",
+            xy=(0.03, 0.97), xycoords="axes fraction", ha="left", va="top",
+            color=INK["text"], fontsize=8,
+            bbox=dict(facecolor=INK["surface"], edgecolor="none",
+                      boxstyle="round,pad=0.3", alpha=0.92))
+    ax.annotate(
+        f"skew {s['skew']:+.2f}   excess kurtosis {s['excess_kurtosis']:+.2f}"
+        f"   sd/robust {s['sd_over_mad']:.2f}",
+        xy=(0, -0.13), xycoords="axes fraction",
+        color=INK["text_secondary"], fontsize=8)
     return _save(fig, out_path)

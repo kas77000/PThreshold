@@ -184,6 +184,36 @@ means accepting whatever coverage follows; fixing the coverage means a
 percentile bound (`--percentile`), which delivers it by construction and assumes
 no distribution at all.
 
+### 1a-ii. `normality.csv` and `qq_<cell>.png` — the evidence, not the argument
+
+`fit` now writes a normality report per cell and a QQ plot to go with it. The
+one line that settles the coverage discussion:
+
+| Column | Meaning |
+|---|---|
+| `expected_beyond` | orders a **normal** distribution says should fall outside ±k·sd |
+| `observed_beyond` | orders that actually do |
+| `tail_ratio` | observed ÷ expected — the coverage shortfall, as a multiple |
+| `verdict` | close to normal / fat-tailed / very fat-tailed |
+
+    expected_beyond 1.1   observed_beyond 86   tail_ratio 75x   very fat-tailed
+
+Read that as: *the rule promised about one order beyond four sigma; the book
+delivered eighty-six.*
+
+**The verdict deliberately ignores the p-value.** Jarque-Bera is reported
+because someone will ask for it, but it decides nothing: at n = 18,000 it
+rejects normality for departures far too small to matter, so a verdict driven
+by it would condemn a book that is perfectly fine for the purpose. The verdict
+tracks `tail_ratio`, which is what the threshold actually depends on.
+
+The **distribution chart** now draws the fitted normal over the histogram, and
+**`qq_<cell>.png`** plots observed against normal quantiles with the 45° line.
+Fat tails show as an S-curve bending away from the line at both ends. Together
+these are the written evidence that the Gaussian assumption was *tested* rather
+than assumed — which is a different, and much better, position to be in than
+having assumed it.
+
 ### 1b. `spread_bps_median`, in `bands.csv`
 
 The metric is unitless — performance divided by the spread — so the bounds come

@@ -19,8 +19,9 @@ import sys
 
 import pandas as pd
 
-from perfthreshold import (calibrate, config, fit, groups, load, persist,
-                           plots, schema, score, split)
+from perfthreshold import (calibrate, config, fit, groups, load,
+                           normality, persist, plots, schema, score,
+                           split)
 
 
 _TARGET_WARNING = (
@@ -167,6 +168,16 @@ def cmd_fit(args) -> int:
     splits = split.report(resolved, k=k, percentile=args.percentile,
                           min_market_n=args.min_cell_n)
 
+    # Whether the Gaussian assumption behind "k sigma covers X%" actually
+    # holds. Printed as well as written, because it is the first thing anyone
+    # challenges about the rule.
+    norm = normality.report(resolved, k=k)
+    print("\nNormality of each cell (does the coverage claim hold?):")
+    print(norm[["cell_key", "n", "excess_kurtosis", "sd_over_mad",
+                "expected_beyond", "observed_beyond", "tail_ratio",
+                "coverage_pct", "coverage_pct_if_normal",
+                "verdict"]].to_string(index=False))
+
     band_file = persist.BandFile(
         metric=config.METRIC_COLUMN, metric_units=config.METRIC_UNITS,
         scope=args.scope, market_groups=config.MARKET_GROUPS,
@@ -184,6 +195,7 @@ def cmd_fit(args) -> int:
     paths = persist.write(args.out, band_file)
     curve.to_csv(os.path.join(args.out, "calibration.csv"), index=False)
     splits.to_csv(os.path.join(args.out, "split_report.csv"), index=False)
+    norm.to_csv(os.path.join(args.out, "normality.csv"), index=False)
     clean.to_frame().to_csv(os.path.join(args.out, "cleaning_report.csv"),
                             index=False)
 
@@ -198,14 +210,19 @@ def cmd_fit(args) -> int:
                 values, row,
                 os.path.join(args.out, f"distribution_{safe(cell)}.png"),
                 title=str(cell).replace("|", " | "))
+            plots.qq(values,
+                     os.path.join(args.out, f"qq_{safe(cell)}.png"),
+                     title=str(cell).replace("|", " | ") + " — normal QQ",
+                     k=k)
 
     _write_fit_summary(args.out, band_file, curve, splits, clean,
-                       reference_target)
+                       reference_target, norm)
     print(f"\nWrote {paths['json']}")
     return 0
 
 
-def _write_fit_summary(out_dir, band_file, curve, splits, clean, target):
+def _write_fit_summary(out_dir, band_file, curve, splits, clean, target,
+                       norm):
     # A band whose k came from the alert count says so at the top of its own
     # summary, so the caveat travels with the artifact rather than living in
     # someone's memory of how the run was invoked.
@@ -231,6 +248,12 @@ def _write_fit_summary(out_dir, band_file, curve, splits, clean, target):
         "## Bands", "", band_file.bands.to_markdown(index=False), "",
         "## Calibration (leave-one-month-out)", "",
         curve.to_markdown(index=False), "",
+        "## Is the book normal?", "",
+        "`mean +/- k*sd` covers a stated percentage only if the data is "
+        "normal. `tail_ratio` is how many times more orders fall beyond "
+        "+/- k*sd than a Gaussian predicts; `coverage_pct` beside "
+        "`coverage_pct_if_normal` is the same fact as coverage.", "",
+        norm.to_markdown(index=False), "",
         "## Market split evidence", "",
         (splits.to_markdown(index=False) if len(splits)
          else "_no markets met the minimum order count_"), "",

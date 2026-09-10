@@ -101,7 +101,8 @@ because a band fitted on the wrong benchmark still fits and never says so.
 
 `fit` writes `bands.json` (the frozen artifact — scoring needs nothing else),
 `bands.csv`, `calibration.csv` / `.png`, `split_report.csv`,
-`cleaning_report.csv`, a distribution plot per cell, and `summary.md`.
+`normality.csv`, `cleaning_report.csv`, a distribution plot and a normal QQ
+plot per cell, and `summary.md`.
 
 `score` writes `scored_orders.csv`, `outliers.csv` (the queue, ranked by how far
 outside the band each order sits), `drift.csv`, a distribution plot per cell,

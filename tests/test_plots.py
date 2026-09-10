@@ -143,3 +143,30 @@ def test_breach_counts_are_zero_without_a_band():
 def test_breach_counts_ignore_non_finite_values():
     x = np.array([np.nan, np.inf, -np.inf, 5.0])
     assert plots.breach_counts(x, lo=-1.0, hi=1.0) == (0, 1)
+
+
+def test_qq_writes_a_non_empty_png(tmp_path):
+    values, _ = _band_row()
+    out = plots.qq(values, str(tmp_path / "qq.png"), title="VWAP | ALL")
+    assert os.path.exists(out)
+    assert os.path.getsize(out) > 5_000
+
+
+def test_qq_subsamples_a_large_book_without_dropping_the_tails(tmp_path):
+    values, _ = _band_row()
+    out = plots.qq(values, str(tmp_path / "qq.png"), title="big",
+                   max_points=500)
+    assert os.path.exists(out)
+
+
+def test_qq_on_too_few_points_still_writes_a_file(tmp_path):
+    out = plots.qq(np.array([1.0]), str(tmp_path / "qq.png"), title="tiny")
+    assert os.path.exists(out)
+
+
+def test_distribution_can_omit_the_normal_overlay(tmp_path):
+    values, row = _band_row()
+    a = plots.distribution(values, row, str(tmp_path / "a.png"), title="with")
+    b = plots.distribution(values, row, str(tmp_path / "b.png"), title="without",
+                           show_normal=False)
+    assert os.path.getsize(a) != os.path.getsize(b)

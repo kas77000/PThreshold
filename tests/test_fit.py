@@ -160,3 +160,52 @@ def test_spread_columns_are_nan_when_the_extract_has_no_spread():
     df = _resolved().drop(columns=[schema.SPREAD_BPS])
     res = fit.fit_cells(df, k=4.0, min_cell_n=100)
     assert res.bands["spread_bps_median"].isna().all()
+
+
+def test_normal_coverage_is_the_textbook_figure():
+    # The number people mean by "4 sigma covers 99.9937%".
+    assert fit.normal_coverage_pct(4.0) == pytest.approx(99.99366, abs=1e-4)
+    assert fit.normal_coverage_pct(3.0) == pytest.approx(99.73002, abs=1e-4)
+    assert fit.normal_coverage_pct(3.4) == pytest.approx(99.93261, abs=1e-4)
+
+
+def test_achieved_coverage_matches_the_breaches_actually_counted():
+    df = _resolved()
+    res = fit.fit_cells(df, k=4.0, min_cell_n=100)
+    scored = fit.apply(df, res.bands)
+    for _, row in res.bands.iterrows():
+        cell = scored[scored[schema.CELL_KEY] == row["cell_key"]]
+        flagged = int(cell[fit.ZONE].isin(list(rule.FLAGGED)).sum())
+        assert row["n_outside"] == flagged
+        assert row["coverage_pct"] == pytest.approx(
+            100.0 * (1 - flagged / row["n"]))
+
+
+def test_achieved_coverage_falls_short_of_normal_on_a_fat_tailed_book():
+    # The whole point: the formula is computed exactly as specified, but the
+    # coverage figure is a property of the normal distribution, not of the
+    # arithmetic. On fat tails the same k covers materially less.
+    df = _resolved(n_per_month=2000, months=12, seed=77)
+    res = fit.fit_cells(df, k=4.0, min_cell_n=100)
+    for _, row in res.bands.iterrows():
+        assert row["coverage_pct_if_normal"] == pytest.approx(99.99366, abs=1e-4)
+        assert row["coverage_pct"] < row["coverage_pct_if_normal"]
+
+
+def test_an_inherited_band_reports_coverage_against_the_bounds_in_force():
+    df = _resolved(scope="groups",
+                   market_groups={"TIGHT": ["HK"], "WIDE": ["JP"]},
+                   n_per_month=300, months=12)
+    jp = df[df[schema.MARKET] == "JP"]
+    res = fit.fit_cells(df, k=4.0, min_cell_n=len(jp) + 1)
+    row = res.bands.set_index("cell_key").loc["VWAP|WIDE"]
+    assert row["fallback_from"] != ""
+    own = df.loc[df[schema.CELL_KEY] == "VWAP|WIDE", schema.METRIC].to_numpy()
+    assert row["n_outside"] == rule.count_flags(own, row["lo"], row["hi"])
+
+
+def test_an_unfitted_cell_reports_no_coverage_rather_than_100_percent():
+    df = _resolved(n_per_month=10, months=2)
+    res = fit.fit_cells(df, k=4.0, min_cell_n=10_000)
+    assert res.bands["n_outside"].eq(0).all()
+    assert res.bands["coverage_pct"].isna().all()

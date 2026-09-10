@@ -20,6 +20,7 @@ score NO_BAND. Banding on too little evidence is worse than not banding.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -33,6 +34,7 @@ ZONE = "zone"
 
 BAND_COLS = [
     "cell_key", schema.BENCHMARK, schema.MARKET_GROUP, "n",
+    "n_outside", "coverage_pct", "coverage_pct_if_normal",
     "spread_bps_median", "spread_bps_mean",
     "mean", "sd", "median", "mad_sigma",
     "sigma_lo", "sigma_hi", "p_lo", "p_hi",
@@ -50,13 +52,34 @@ class FitResult:
     min_cell_n: int = 2000
 
 
+def normal_coverage_pct(k: float) -> float:
+    """Coverage of mean +/- k*sd IF the data were normal. Reference only.
+
+    This is the number people mean by "4 sigma covers 99.9937%". It is a
+    property of the NORMAL DISTRIBUTION, not of the formula -- the arithmetic
+    `mean + k*sd` delivers that coverage only when the data is Gaussian. On a
+    fat-tailed book the same formula covers far less, and the gap between this
+    column and `coverage_pct` is exactly that discrepancy, measured.
+    """
+    if not math.isfinite(k):
+        return float("nan")
+    # Two-sided normal tail, via erfc so no scipy dependency is introduced.
+    tail = math.erfc(abs(float(k)) / math.sqrt(2.0))
+    return 100.0 * (1.0 - tail)
+
+
 def _row(cell: str, benchmark: str, market_group: str, b: dict,
          *, fitted: bool, fallback_from: str,
+         n_outside: int = 0, coverage_pct: float = float("nan"),
          spread_median: float = float("nan"),
          spread_mean: float = float("nan")) -> dict:
     return {
         "cell_key": cell, schema.BENCHMARK: benchmark,
         schema.MARKET_GROUP: market_group, "n": b["n"],
+        # What the band ACTUALLY covered on the orders it was fitted to,
+        # beside what it would have covered had they been normal.
+        "n_outside": n_outside, "coverage_pct": coverage_pct,
+        "coverage_pct_if_normal": normal_coverage_pct(b["k"]),
         # The metric is unitless (spreads). Carrying the cell's own spread is
         # what lets a bound of 4.33 spreads be read back as ~35 bps -- without
         # it the band cannot be translated into money by anyone reading it.
@@ -104,23 +127,33 @@ def fit_cells(df: pd.DataFrame, k: float, percentile: float = 99.5,
         spreads = {"spread_median": spread_median, "spread_mean": spread_mean}
 
         if own["n"] >= min_cell_n:
-            rows.append(_row(cell, bench, group_name, own,
-                             fitted=True, fallback_from="", **spreads))
+            effective, fitted, fallback = own, True, ""
         else:
             parent = parents.get(bench, {})
-            pkey = groups.parent_key(cell)
             # A parent that is itself thin is not a rescue. The only honest
             # answer then is no band at all.
             if parent.get("n", 0) >= min_cell_n and parent["n"] > own["n"]:
-                inherited = dict(parent)
-                inherited["n"] = own["n"]   # the cell's own size, not the pool's
-                rows.append(_row(cell, bench, group_name, inherited,
-                                 fitted=False, fallback_from=pkey, **spreads))
+                effective = dict(parent)
+                effective["n"] = own["n"]   # the cell's own size, not the pool's
+                fitted, fallback = False, groups.parent_key(cell)
             else:
-                blank = rule.bounds(np.array([]), k=k, percentile=percentile)
-                blank["n"] = own["n"]
-                rows.append(_row(cell, bench, group_name, blank,
-                                 fitted=False, fallback_from="", **spreads))
+                effective = rule.bounds(np.array([]), k=k, percentile=percentile)
+                effective["n"] = own["n"]
+                fitted, fallback = False, ""
+
+        # Coverage the band actually achieved on the orders it was fitted to,
+        # measured against the bounds that are really in force -- inherited
+        # ones included, since those are what will judge these orders.
+        values = g[schema.METRIC].to_numpy(dtype=float)
+        n_outside = rule.count_flags(values, effective["lo"], effective["hi"])
+        coverage = (100.0 * (1.0 - n_outside / effective["n"])
+                    if effective["n"] and np.isfinite(effective["hi"])
+                    else float("nan"))
+
+        rows.append(_row(cell, bench, group_name, effective,
+                         fitted=fitted, fallback_from=fallback,
+                         n_outside=n_outside, coverage_pct=coverage,
+                         **spreads))
 
         medians[cell] = {
             f: (float(g[f].median()) if f in g.columns and g[f].notna().any()

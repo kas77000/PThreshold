@@ -161,6 +161,29 @@ The table is measured, not theoretical, and it saturates: above a ratio of about
 [`fat-tails.md`](fat-tails.md) has the measurements and what else the ratio
 implies.
 
+### 1a. `coverage_pct` vs `coverage_pct_if_normal`, in `bands.csv`
+
+The direct answer to *"doesn't 4σ cover 99.9937%?"*
+
+| Column | What it is |
+|---|---|
+| `coverage_pct_if_normal` | What `mean ± k·sd` **would** cover if the data were normal. For k=4 this is 99.9937%. A property of the normal distribution, not of the formula. |
+| `coverage_pct` | What the band **actually** covered on the orders it was fitted to. |
+| `n_outside` | The breaches behind that figure. |
+
+The formula is computed exactly as specified either way. The coverage figure
+comes from the Gaussian assumption, and when the book is fat-tailed the two
+columns separate — often by one to two orders of magnitude in the tail:
+
+    coverage_pct 99.52%   vs   coverage_pct_if_normal 99.9937%
+    -> 0.48% left outside instead of 0.0063%, ~75x as many orders
+
+You cannot hold both the multiple (4) and the coverage (99.9937%) on non-normal
+data — they are the same statement only under a Gaussian. Fixing the multiple
+means accepting whatever coverage follows; fixing the coverage means a
+percentile bound (`--percentile`), which delivers it by construction and assumes
+no distribution at all.
+
 ### 1b. `spread_bps_median`, in `bands.csv`
 
 The metric is unitless — performance divided by the spread — so the bounds come
